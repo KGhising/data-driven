@@ -1,14 +1,16 @@
+
 #!/usr/bin/env python3
 """
 Standalone downloader for filings.xbrl.org API (JSON:API).
 Docs: https://filings.xbrl.org/docs/api
 """
 import argparse
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin
 from pathlib import Path
 import requests
 
 API_BASE = "https://filings.xbrl.org/api/filings"
+BASE_DOWNLOAD_URL = "https://filings.xbrl.org"
 
 def api_get(url: str) -> dict:
     r = requests.get(url, timeout=30)
@@ -32,6 +34,9 @@ def first_attr(attrs: dict, *keys, default=None):
         if k in attrs and attrs[k]:
             return attrs[k]
     return default
+
+def ensure_absolute_url(url: str) -> str:
+    return urljoin(BASE_DOWNLOAD_URL, url)
 
 def main():
     p = argparse.ArgumentParser()
@@ -68,6 +73,7 @@ def main():
         package_url = first_attr(attrs, 'package_url', 'report_package_url')
 
         if json_url and not args.skip_json:
+            json_url = ensure_absolute_url(json_url)
             pth = out_json / f"{filing_id}.json"
             try:
                 r = requests.get(json_url, timeout=60)
@@ -78,6 +84,7 @@ def main():
                 print('JSON failed:', filing_id, e)
 
         if package_url and not args.skip_zip:
+            package_url = ensure_absolute_url(package_url)
             pthz = out_zip / f"{filing_id}.zip"
             try:
                 r = requests.get(package_url, timeout=120)
