@@ -3,14 +3,12 @@ from collections import Counter
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from zipfile import ZipFile
 
 import pandas as pd
 import re
 from tqdm import tqdm
 
 DEFAULT_REPORTS_DIR = Path("data/ixbrl-reports")
-DEFAULT_PACKAGES_DIR = Path("data/xbrl-packages")
 DEFAULT_OUTPUT = Path("data/csv-data/ai_keywords_ixbrl.csv")
 
 RAW_KEYWORDS: List[str] = [
@@ -50,7 +48,6 @@ SINGLE_WORD_KEYWORDS: Dict[str, re.Pattern] = {
 
 
 class SimpleHTMLExtractor(HTMLParser):
-    """Extract visible text from iXBRL documents while skipping hidden content."""
 
     IGNORE_TAGS = {
         "script",
@@ -173,76 +170,6 @@ def process_ixbrl_document(name: str, content: bytes) -> Tuple[int, Counter]:
     return sum(keyword_counts.values()), keyword_counts
 
 
-def iter_ixbrl_files(zip_path: Path) -> List[Tuple[str, bytes]]:
-    documents: List[Tuple[str, bytes]] = []
-    with ZipFile(zip_path) as zf:
-        for info in zf.infolist():
-            filename = info.filename
-            if info.is_dir():
-                continue
-            lower_name = filename.lower()
-            if lower_name.endswith((".xhtml", ".html")):
-                try:
-                    with zf.open(info) as file_obj:
-                        documents.append((filename, file_obj.read()))
-                except Exception as exc:
-                    print(f"[warn] Failed to read {filename} in {zip_path.name}: {exc}")
-    return documents
-
-
-def process_package(zip_path: Path) -> List[Dict[str, object]]:
-    documents = iter_ixbrl_files(zip_path)
-    if not documents:
-        print(f"[warn] No iXBRL documents found in {zip_path.name}")
-        return []
-
-    package_counter: Counter = Counter()
-    total_keywords = 0
-    records: List[Dict[str, object]] = []
-
-    for doc_name, content in documents:
-        doc_total, doc_counter = process_ixbrl_document(doc_name, content)
-        total_keywords += doc_total
-        package_counter.update(doc_counter)
-
-        records.append(
-            {
-                "package": zip_path.name,
-                "document": doc_name,
-                "ai_keyword_total": doc_total,
-                "top_keywords": ", ".join(
-                    f"{keyword}:{count}" for keyword, count in doc_counter.most_common() if count > 0
-                )
-                or "none",
-            }
-        )
-
-    records.append(
-        {
-            "package": zip_path.name,
-            "document": "__package_total__",
-            "ai_keyword_total": total_keywords,
-            "top_keywords": ", ".join(
-                f"{keyword}:{count}" for keyword, count in package_counter.most_common() if count > 0
-            )
-            or "none",
-        }
-    )
-
-    return records
-
-
-def collect_results(packages_dir: Path, limit: Optional[int] = None) -> List[Dict[str, object]]:
-    results: List[Dict[str, object]] = []
-    files = sorted(packages_dir.glob("*.zip"))
-    if limit:
-        files = files[:limit]
-    for zip_path in tqdm(files, desc="Processing packages", unit="package"):
-        results.extend(process_package(zip_path))
-
-    return results
-
-
 def collect_from_reports(reports_dir: Path) -> List[Dict[str, object]]:
     files = sorted(reports_dir.glob("*.xhtml")) + sorted(reports_dir.glob("*.html"))
     if not files:
@@ -302,24 +229,13 @@ def main() -> None:
         help="Directory containing extracted iXBRL report files (default: data/ixbrl-reports).",
     )
     parser.add_argument(
-        "--packages-dir",
-        help="Optional directory containing XBRL report packages (zip). "
-             "If provided, packages are processed in addition to reports.",
-    )
-    parser.add_argument(
         "--output",
         default=str(DEFAULT_OUTPUT),
         help="CSV path to store AI keyword counts (default: data/csv-data/ai_keywords_ixbrl.csv).",
     )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        help="Optional limit on the number of packages to process.",
-    )
 
     args = parser.parse_args()
     reports_dir = Path(args.reports_dir)
-    packages_dir = Path(args.packages_dir) if args.packages_dir else None
 
     results: List[Dict[str, object]] = []
 
@@ -331,14 +247,6 @@ def main() -> None:
             print(f"[warn] No iXBRL files found in {reports_dir}")
     else:
         print(f"[warn] Reports directory not found: {reports_dir}")
-
-    if packages_dir:
-        if packages_dir.exists():
-            package_records = collect_results(packages_dir, limit=args.limit)
-            if package_records:
-                results.extend(package_records)
-        else:
-            print(f"[warn] Packages directory not found: {packages_dir}")
 
     if not results:
         print("No AI keyword results generated from the provided sources.")
