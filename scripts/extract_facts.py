@@ -13,16 +13,6 @@ from tqdm import tqdm
 DEFAULT_INPUT_DIR = Path("data/ixbrl-reports")
 DEFAULT_OUTPUT = Path("data/csv-data/financial_facts.csv")
 
-TARGET_CONCEPTS = [
-    "TotalEquity",
-    "EquityAndLiabilities",
-    "Assets",
-    "Revenue",
-    "ProfitLoss",
-    "ProfitLossFromOperatingActivitiesBeforeInterestTaxesDepreciationAndAmortisationExpense",
-    "CashFlowsFromUsedInOperatingActivities",
-]
-
 COMPANY_NAME_CONCEPTS: Sequence[str] = (
     "ifrs-full:NameOfReportingEntityOrOtherMeansOfIdentification",
     "ifrs-full:NameOfParentEntity",
@@ -191,7 +181,7 @@ def extract_company_name_from_ixbrl(
     return None
 
 
-def load_ixbrl(path: Path) -> List[Dict[str, Any]]:
+def load_ixbrl(path: Path, target_concepts: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     try:
         tree = ET.parse(str(path))
     except ET.ParseError as exc:
@@ -249,7 +239,8 @@ def load_ixbrl(path: Path) -> List[Dict[str, Any]]:
         else:
             namespace, name = "", concept
 
-        if name not in TARGET_CONCEPTS:
+        # Filter by concepts only if target_concepts is specified and not empty
+        if target_concepts and name not in target_concepts:
             continue
 
         context_ref = fact.get("contextRef")
@@ -340,6 +331,7 @@ def extract_row_from_json(
     fact: Dict[str, Any],
     source_file: str,
     company_name: Optional[str],
+    target_concepts: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     dimensions = fact.get("dimensions", {})
     concept: str = dimensions.get("concept", "")
@@ -351,7 +343,8 @@ def extract_row_from_json(
     else:
         namespace, name = "", concept
 
-    if name not in TARGET_CONCEPTS:
+    # Filter by concepts only if target_concepts is specified and not empty
+    if target_concepts and name not in target_concepts:
         return None
 
     lei = extract_lei(
@@ -382,7 +375,7 @@ def extract_row_from_json(
     }
 
 
-def gather_concepts(files: List[Path]) -> List[Dict[str, Any]]:
+def gather_concepts(files: List[Path], target_concepts: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for path in tqdm(files, desc="Processing filings", unit="file"):
         suffix = path.suffix.lower()
@@ -395,11 +388,11 @@ def gather_concepts(files: List[Path]) -> List[Dict[str, Any]]:
             company_name = extract_company_name_from_json(data)
             facts = data.get("facts", {})
             for fact_id, fact in facts.items():
-                record = extract_row_from_json(fact_id, fact, path.name, company_name)
+                record = extract_row_from_json(fact_id, fact, path.name, company_name, target_concepts)
                 if record:
                     rows.append(record)
         elif suffix in {".xhtml", ".html"}:
-            rows.extend(load_ixbrl(path))
+            rows.extend(load_ixbrl(path, target_concepts))
         else:
             print(f"[warn] Unsupported file type skipped: {path.name}")
 
@@ -444,7 +437,7 @@ def to_tabular(rows: List[Dict[str, Any]]) -> pd.DataFrame:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Export key concepts directly from iXBRL or XBRL JSON filings."
+        description="Export financial facts from iXBRL or XBRL JSON filings. Extracts all facts by default."
     )
     parser.add_argument(
         "--input-dir",
@@ -459,6 +452,12 @@ def main() -> None:
         "--output",
         default=str(DEFAULT_OUTPUT),
         help="Path to write the tabular CSV (default: data/csv-data/financial_facts.csv).",
+    )
+    parser.add_argument(
+        "--concepts",
+        nargs="+",
+        default=None,
+        help="Filter by specific concepts (e.g., --concepts Equity Revenue Assets). If not specified, extracts all facts.",
     )
 
     args = parser.parse_args()
@@ -475,7 +474,8 @@ def main() -> None:
         print(f"No supported files found in {target}")
         return
 
-    rows = gather_concepts(files)
+    target_concepts = args.concepts
+    rows = gather_concepts(files, target_concepts)
     if not rows:
         print("No key concept facts found in the provided files.")
         return
