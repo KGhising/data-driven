@@ -134,26 +134,58 @@ def extract_company_name_from_ixbrl(
     return None
 
 
-def extract_metadata_from_html(html: str) -> Tuple[Optional[str], Optional[str]]:
+def clean_period(period: Optional[str]) -> str:
+    if not period:
+        return "Unknown"
+    text = str(period)
+    if "T" in text and "/" in text:
+        text = text.split("/", 1)[0]
+    if "T" in text:
+        return text.split("T")[0][:4]
+    if "/" in text:
+        return text.split("/", 1)[0][:4]
+    return text[:4]
+
+
+def extract_metadata_from_html(html: str) -> Tuple[Optional[str], Optional[str], List[str]]:
     try:
         root = ET.fromstring(html)
     except ET.ParseError:
-        return None, None
+        return None, None, []
 
     lei = None
+    years = set()
+
     for context in root.findall(f".//{{{XBRLI_NS}}}context"):
         identifier_elem = context.find(f".//{{{XBRLI_NS}}}identifier")
-        if identifier_elem is not None and identifier_elem.text:
+        if identifier_elem is not None and identifier_elem.text and not lei:
             lei = extract_lei(identifier_elem.text, identifier_elem.attrib)
-            if lei:
-                break
+
+        period_elem = context.find(f".//{{{XBRLI_NS}}}period")
+        if period_elem is not None:
+            instant_elem = period_elem.find(f"./{{{XBRLI_NS}}}instant")
+            if instant_elem is not None and instant_elem.text:
+                year = clean_period(instant_elem.text.strip())
+                if year != "Unknown":
+                    years.add(year)
+            else:
+                start_elem = period_elem.find(f"./{{{XBRLI_NS}}}startDate")
+                end_elem = period_elem.find(f"./{{{XBRLI_NS}}}endDate")
+                if start_elem is not None and end_elem is not None and start_elem.text and end_elem.text:
+                    end_year = clean_period(end_elem.text.strip())
+                    if end_year != "Unknown":
+                        years.add(end_year)
+                    start_year = clean_period(start_elem.text.strip())
+                    if start_year != "Unknown":
+                        years.add(start_year)
 
     if not lei:
-        return None, None
+        return None, None, []
 
     continuation_map = build_continuation_map(root)
     company_name = extract_company_name_from_ixbrl(root, continuation_map)
-    return lei, company_name
+    sorted_years = sorted(list(years))
+    return lei, company_name, sorted_years
 
 
 RAW_KEYWORDS: List[str] = [
@@ -308,14 +340,19 @@ def analyse_text(text: str) -> Counter:
     return counter
 
 
-def process_ixbrl_document(name: str, content: bytes) -> Optional[Tuple[str, Optional[str], int, Counter]]:
+def process_ixbrl_document(name: str, content: bytes) -> List[Tuple[str, Optional[str], str, int, Counter]]:
     html = decode_html(content)
-    entity, company_name = extract_metadata_from_html(html)
-    if not entity:
-        return None
+    entity, company_name, years = extract_metadata_from_html(html)
+    if not entity or not years:
+        return []
+    
     text = extract_text(html)
     keyword_counts = analyse_text(text)
-    return entity, company_name, sum(keyword_counts.values()), keyword_counts
+    total_count = sum(keyword_counts.values())
+    
+    reporting_year = max(years)
+    
+    return [(entity, company_name, reporting_year, total_count, keyword_counts)]
 
 
 def collect_from_reports(reports_dir: Path) -> List[Dict[str, object]]:
@@ -323,7 +360,7 @@ def collect_from_reports(reports_dir: Path) -> List[Dict[str, object]]:
     if not files:
         return []
 
-    entity_stats: Dict[str, Dict[str, Any]] = {}
+    entity_year_stats: Dict[Tuple[str, str], Dict[str, Any]] = {}
 
     for file_path in tqdm(files, desc=f"Processing {reports_dir.name}", unit="file"):
         try:
@@ -332,30 +369,34 @@ def collect_from_reports(reports_dir: Path) -> List[Dict[str, object]]:
             print(f"[warn] Failed to read {file_path}: {exc}")
             continue
 
-        result = process_ixbrl_document(file_path.name, content)
-        if result is None:
+        results = process_ixbrl_document(file_path.name, content)
+        if not results:
             continue
-        entity, company_name, doc_total, doc_counter = result
+        
+        for entity, company_name, year, doc_total, doc_counter in results:
+            key = (entity, year)
 
-        entry = entity_stats.setdefault(
-            entity,
-            {
-                "entity": entity,
-                "company_name": company_name or "",
-                "ai_keyword_total": 0,
-                "counter": Counter(),
-            },
-        )
-        if company_name and not entry["company_name"]:
-            entry["company_name"] = company_name
-        entry["ai_keyword_total"] += doc_total
-        entry["counter"].update(doc_counter)
+            entry = entity_year_stats.setdefault(
+                key,
+                {
+                    "entity": entity,
+                    "year": year,
+                    "company_name": company_name or "",
+                    "ai_keyword_total": 0,
+                    "counter": Counter(),
+                },
+            )
+            if company_name and not entry["company_name"]:
+                entry["company_name"] = company_name
+            entry["ai_keyword_total"] += doc_total
+            entry["counter"].update(doc_counter)
 
     records: List[Dict[str, object]] = []
-    for entity_id, stats in entity_stats.items():
+    for (entity_id, year), stats in entity_year_stats.items():
         records.append(
             {
                 "entity": entity_id,
+                "year": year,
                 "company_name": stats["company_name"],
                 "ai_keyword_total": stats["ai_keyword_total"],
                 "top_keywords": ", ".join(
@@ -370,7 +411,7 @@ def collect_from_reports(reports_dir: Path) -> List[Dict[str, object]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Extract AI keyword counts from iXBRL reports, aggregated by entity (LEI)."
+        description="Extract AI keyword counts from iXBRL reports, aggregated by entity (LEI) with years as columns."
     )
     parser.add_argument(
         "--reports-dir",
@@ -402,15 +443,70 @@ def main() -> None:
         return
 
     df = pd.DataFrame(results)
-    df = df.sort_values(by=["entity"]).reset_index(drop=True)
+    
+    if df.empty:
+        print("No results to process.")
+        return
+    
+    if "company_name" not in df.columns:
+        df["company_name"] = ""
+    
+    if "year" not in df.columns:
+        print("No year column found in results.")
+        return
+    
+    year_counts = df["year"].value_counts().sort_index()
+    print(f"\nYears found in data before pivoting:")
+    for year, count in year_counts.items():
+        print(f"  {year}: {count} entity-year combinations")
+    
+    all_years = sorted(df["year"].unique().astype(str))
+    all_entities = df[["entity", "company_name"]].drop_duplicates().sort_values(["entity"])
+    
+    complete_index = pd.MultiIndex.from_frame(all_entities, names=["entity", "company_name"])
+    
+    ai_keyword_pivot = df.pivot_table(
+        index=["entity", "company_name"],
+        columns="year",
+        values="ai_keyword_total",
+        aggfunc="first"
+    )
+    ai_keyword_pivot.columns = [str(col) for col in ai_keyword_pivot.columns]
+    ai_keyword_pivot = ai_keyword_pivot.reindex(complete_index, fill_value=0.0)
+    for year in all_years:
+        if year not in ai_keyword_pivot.columns:
+            ai_keyword_pivot[year] = 0.0
+    ai_keyword_pivot = ai_keyword_pivot.reindex(columns=all_years, fill_value=0.0)
+    ai_keyword_pivot = ai_keyword_pivot.fillna(0.0)
+    
+    top_keywords_pivot = df.pivot_table(
+        index=["entity", "company_name"],
+        columns="year",
+        values="top_keywords",
+        aggfunc="first"
+    )
+    top_keywords_pivot.columns = [f"top_keywords_{col}" for col in top_keywords_pivot.columns]
+    top_keywords_ordered_cols = [f"top_keywords_{year}" for year in all_years]
+    top_keywords_pivot = top_keywords_pivot.reindex(complete_index, fill_value="none")
+    for col in top_keywords_ordered_cols:
+        if col not in top_keywords_pivot.columns:
+            top_keywords_pivot[col] = "none"
+    top_keywords_pivot = top_keywords_pivot.reindex(columns=top_keywords_ordered_cols, fill_value="none")
+    top_keywords_pivot = top_keywords_pivot.fillna("none")
+    
+    pivoted_df = pd.concat([ai_keyword_pivot, top_keywords_pivot], axis=1).reset_index()
+    pivoted_df = pivoted_df.sort_values(by=["entity"]).reset_index(drop=True)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(output_path, index=False, encoding="utf-8-sig")
+    pivoted_df.to_csv(output_path, index=False, encoding="utf-8-sig")
 
     print(f"AI keyword counts (iXBRL) saved to: {output_path}")
-    print(f"Entities processed: {df['entity'].nunique()}")
-    print(f"Rows written: {len(df)}")
+    print(f"Entities processed: {pivoted_df['entity'].nunique()}")
+    years = sorted([col for col in pivoted_df.columns if col.isdigit()])
+    print(f"Years: {', '.join(years)}")
+    print(f"Rows written: {len(pivoted_df)}")
+    print(f"Columns: {len(pivoted_df.columns)}")
 
 
 if __name__ == "__main__":
