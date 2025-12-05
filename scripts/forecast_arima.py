@@ -29,7 +29,6 @@ def load_ratio_series(
     if metric not in df.columns:
         raise ValueError(f"Metric '{metric}' not found in columns: {list(df.columns)}")
 
-    # Ensure sorted by year and build a proper time index
     df = df.copy()
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df = df.dropna(subset=["year"])
@@ -39,17 +38,11 @@ def load_ratio_series(
         raise ValueError("No valid year values available after cleaning.")
 
     s = df.set_index("year")[metric].astype(float)
-    # In case of duplicate years take the mean
     s = s.groupby(level=0).mean()
     return s
 
 
 def fit_arima(series: pd.Series):
-    """
-    Fit a simple ARIMA model.
-    With very short series (<=3 points) we fall back to ARIMA(0, 1, 0).
-    Otherwise we try (1,1,1).
-    """
     if len(series) <= 2:
         raise ValueError("Need at least 3 observations to fit ARIMA.")
 
@@ -71,7 +64,6 @@ def forecast_arima(
     mean_forecast = forecast_res.predicted_mean
     conf_int = forecast_res.conf_int(alpha=0.05)
 
-    # Build index for future years
     last_year = int(series.index.max())
     future_years = np.arange(last_year + 1, last_year + 1 + horizon, dtype=int)
     mean_forecast.index = future_years
@@ -90,13 +82,10 @@ def plot_forecast(
 ) -> None:
     plt.figure(figsize=(10, 6))
 
-    # Historical
     plt.plot(series.index, series.values, label="Historical", marker="o")
 
-    # Forecast
     plt.plot(forecast.index, forecast.values, label="Forecast", marker="o", linestyle="--")
 
-    # Confidence interval
     plt.fill_between(
         forecast.index,
         conf_int.iloc[:, 0].values,
@@ -176,7 +165,6 @@ def main() -> None:
 
     forecast, conf_int = forecast_arima(series, args.horizon)
 
-    # Build result table with proper year alignment
     hist_df = series.reset_index()
     hist_df.columns = ["year", "historical_value"]
 
@@ -185,11 +173,9 @@ def main() -> None:
     ci_df = conf_int.reset_index()
     ci_df.columns = ["year", "lower_95", "upper_95"]
 
-    # Outer join on all years present in either historical or forecast
     result_df = pd.merge(hist_df, fc_df, on="year", how="outer")
     result_df = pd.merge(result_df, ci_df, on="year", how="left")
 
-    # Output file names
     safe_metric = args.metric.replace("/", "_")
     suffix_parts = []
     if args.entity:

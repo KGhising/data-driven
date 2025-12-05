@@ -33,7 +33,6 @@ def normalize_dataframe(
     df = df[required_columns].copy()
     df = df.replace({"": pd.NA, " ": pd.NA})
     
-    # Filter by concepts if specified
     if concepts:
         df = df[df["concept"].isin(concepts)]
 
@@ -49,20 +48,16 @@ def filter_complete_entities(
     required_concepts: Optional[List[str]] = None
 ) -> pd.DataFrame:
     def entity_is_complete(group: pd.DataFrame) -> bool:
-        # Check if entity has all required concepts
         if required_concepts:
             entity_concepts = set(group["concept"].unique())
             required_concepts_set = set(required_concepts)
             if not required_concepts_set.issubset(entity_concepts):
-                # Entity is missing at least one required concept
                 return False
         
-        # Check if all required year columns have non-null values for all concepts
         year_cols = [col for col in required_years if col in group.columns]
         if not year_cols:
             return False
         if group[year_cols].isna().any().any():
-            # At least one year value is missing for at least one concept
             return False
         return True
 

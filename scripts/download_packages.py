@@ -11,17 +11,11 @@ from urllib.parse import urlencode, urljoin
 
 import requests
 
-# API endpoints as per https://filings.xbrl.org/docs/api
 API_BASE = "https://filings.xbrl.org/api/filings"
 BASE_DOWNLOAD_URL = "https://filings.xbrl.org"
 
 
 def api_get(url: str) -> dict:
-    """
-    Make a GET request to the API and return JSON response.
-    
-    The API follows JSON API standard with pagination links in the 'links' object.
-    """
     resp = requests.get(url, timeout=30)
     resp.raise_for_status()
     return resp.json()
@@ -46,31 +40,19 @@ def iter_filings(
     company_filter: str | None,
     single_page: bool = False,
 ):
-    """
-    Iterate through filings from the API.
-    
-    According to the API docs (https://filings.xbrl.org/docs/api):
-    - Pagination links are in the 'links' object within the response
-    - Use page[size] and page[number] query parameters for pagination
-    - Results follow JSON API standard format
-    """
     url = f"{API_BASE}?{query}" if query else API_BASE
     count = 0
     while url:
         data = api_get(url)
-        # JSON API standard: data is in the 'data' array
         for item in data.get("data", []):
             attrs = item.get("attributes", {})
 
-            # Client-side date filtering (if server-side filter didn't work)
             if min_date:
                 processed = attrs.get("processed", "")
                 if processed and processed < min_date:
                     continue
 
-            # Client-side company filtering (if server-side filter didn't work)
             if company_filter:
-                # When include=entity is used, entity data is in relationships
                 relationships = item.get("relationships", {})
                 entity_data = relationships.get("entity", {}).get("data", {})
                 entity_attrs = entity_data.get("attributes", {}) if entity_data else {}
@@ -99,8 +81,6 @@ def iter_filings(
             if limit and count >= limit:
                 return
         
-        # JSON API standard: pagination links are in the 'links' object
-        # If single_page is True, don't follow pagination links
         if single_page:
             break
         url = (data.get("links") or {}).get("next")
@@ -145,11 +125,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    # Build query parameters according to API documentation
-    # See: https://filings.xbrl.org/docs/api
     query_params: dict[str, str] = {}
     
-    # Filtering: filter[country]=GB format (per API docs)
     if args.country:
         query_params["filter[country]"] = args.country
 
@@ -163,23 +140,18 @@ def main() -> None:
     if args.from_year:
         min_date = f"{args.from_year}-01-01"
 
-    # Date filtering (format may vary, using common JSON API filter syntax)
     if min_date:
         query_params["filter[processed][gte]"] = min_date
 
-    # Company/entity filtering
     if args.company:
         query_params["filter[entity.name]"] = args.company
 
-    # Include referenced resources: ?include=entity (per API docs)
     if args.include:
         query_params["include"] = args.include
     
-    # Sorting: ?sort=-processed for most recent (per API docs)
     if args.sort:
         query_params["sort"] = args.sort
     
-    # Pagination: page[size]=200 and page[number]=2 (per API docs)
     query_params["page[size]"] = str(min(args.page_size or 200, 200))
 
     query = args.filter if args.filter else urlencode(query_params)
@@ -207,7 +179,6 @@ def main() -> None:
         downloaded = 0
         iteration_start = time.time()
 
-        # Add page number to query for this iteration
         iteration_query_params = query_params.copy()
         iteration_query_params["page[number]"] = str(iteration + 1)
         iteration_query = args.filter if args.filter else urlencode(iteration_query_params)

@@ -29,7 +29,6 @@ def build_series(df: pd.DataFrame, entity: str, metric: str) -> pd.Series | None
     if len(s) < 3:
         return None
 
-    # Average if duplicate years
     s = s.groupby(level=0).mean()
     return s
 
@@ -90,13 +89,11 @@ def run_all(horizon: int) -> None:
 
     df = pd.read_csv(RATIOS_CSV)
 
-    # Metrics are all columns except identifiers
     metric_cols = [
         c
         for c in df.columns
         if c not in {"entity", "company_name", "year"}
     ]
-    # Unique entity + company_name pairs
     entity_company_pairs = (
         df[["entity", "company_name"]]
         .dropna(subset=["entity", "company_name"])
@@ -106,7 +103,6 @@ def run_all(horizon: int) -> None:
 
     print(f"Found {len(entity_company_pairs)} entities and {len(metric_cols)} metrics")
 
-    # Collect tidy records for JSON/web viewer
     records: list[dict] = []
 
     for metric in metric_cols:
@@ -122,7 +118,6 @@ def run_all(horizon: int) -> None:
                     f"company_name={company_name}, metric={metric}: {exc}"
                 )
                 continue
-            # Save per-entity/metric CSV (for debugging or other tools)
             csv_path = save_forecast_csv(
                 series,
                 forecast,
@@ -134,7 +129,6 @@ def run_all(horizon: int) -> None:
             )
             print(f"Saved forecast: {csv_path}")
 
-            # Add historical records
             for year, val in series.items():
                 records.append(
                     {
@@ -146,7 +140,6 @@ def run_all(horizon: int) -> None:
                     }
                 )
 
-            # Add forecast records
             for year, val in forecast.items():
                 records.append(
                     {
@@ -162,16 +155,13 @@ def run_all(horizon: int) -> None:
         print("No forecasts produced; nothing to plot.")
         return
 
-    # Build tidy DataFrame for plotting and web viewer
     all_df = pd.DataFrame(records)
 
-    # Export combined JSON for the HTML viewer
     json_path = FORECAST_DIR / "all_forecasts.json"
     json_path.parent.mkdir(parents=True, exist_ok=True)
     all_df.to_json(json_path, orient="records")
     print(f"Wrote combined JSON for web viewer to: {json_path}")
 
-    # Show a single-window plot for a quick visual check
     plot_all_metrics_single_window(all_df, FORECAST_DIR, interactive=True)
 
 

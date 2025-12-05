@@ -239,7 +239,6 @@ def load_ixbrl(path: Path, target_concepts: Optional[List[str]] = None) -> List[
         else:
             namespace, name = "", concept
 
-        # Filter by concepts only if target_concepts is specified and not empty
         if target_concepts and name not in target_concepts:
             continue
 
@@ -343,7 +342,6 @@ def extract_row_from_json(
     else:
         namespace, name = "", concept
 
-    # Filter by concepts only if target_concepts is specified and not empty
     if target_concepts and name not in target_concepts:
         return None
 
@@ -376,7 +374,6 @@ def extract_row_from_json(
 
 
 def get_processed_files(output_path: Path) -> set[str]:
-    """Get set of source files that have already been processed (from existing CSV)."""
     if not output_path.exists():
         return set()
     try:
@@ -394,18 +391,11 @@ def gather_concepts(
     skip_processed: bool = False,
     processed_files: Optional[set[str]] = None,
 ) -> tuple[List[Dict[str, Any]], int]:
-    """
-    Gather concepts from files.
-    
-    Returns:
-        tuple: (rows, skipped_count)
-    """
     rows: List[Dict[str, Any]] = []
     skipped = 0
     processed_files = processed_files or set()
     
     for path in tqdm(files, desc="Processing filings", unit="file"):
-        # Skip if file has already been processed
         if skip_processed and path.name in processed_files:
             skipped += 1
             continue
@@ -519,7 +509,6 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Get list of already processed files if skipping
     processed_files = set()
     existing_tabular = None
     if args.skip_processed or args.append:
@@ -553,14 +542,10 @@ def main() -> None:
         print("No tabular data produced.")
         return
 
-    # Combine with existing data if appending
     if args.append and existing_tabular is not None and not existing_tabular.empty:
-        # Set index for merging, then combine (new values take precedence, old fills gaps)
         index_cols = ["entity", "company_name", "concept"]
         existing_tabular = existing_tabular.set_index(index_cols)
         tabular = tabular.set_index(index_cols)
-        # Combine: new values override old ones, but keep old values where new ones don't exist
-        # Start with new values, fill missing with old values
         tabular = tabular.combine_first(existing_tabular)
         tabular = tabular.reset_index()
         tabular = tabular.sort_values(["entity", "concept"]).reset_index(drop=True)

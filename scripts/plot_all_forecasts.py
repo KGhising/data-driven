@@ -11,12 +11,7 @@ DEFAULT_OUTPUT_DIR = Path("data/forecast-results")
 
 
 def parse_forecast_filename(path: Path) -> Tuple[str, str]:
-    """
-    Extract metric and label from a file named like:
-    arima_profit_margin_Ashtead_Group_plc.csv
-    Returns (metric, label)
-    """
-    stem = path.stem  # e.g. arima_profit_margin_Ashtead_Group_plc
+    stem = path.stem
     parts = stem.split("_", 2)
     if len(parts) < 3 or parts[0] != "arima":
         raise ValueError(f"Unrecognized forecast filename pattern: {path.name}")
@@ -48,7 +43,6 @@ def load_all_forecasts(
         df["year"] = pd.to_numeric(df["year"], errors="coerce")
         df = df.dropna(subset=["year"])
 
-        # Determine value and whether each point is forecast or historical
         hist = pd.to_numeric(df.get("historical_value"), errors="coerce")
         fc = pd.to_numeric(df.get("forecast_value"), errors="coerce")
 
@@ -87,9 +81,7 @@ def plot_forecasts_for_metric(
     if subset.empty:
         raise ValueError(f"No data for metric '{metric}'.")
 
-    # Plot each label separately with solid (historical) and dashed (forecast) segments
-        # Use seaborn for nicer styling; encode forecast vs historical by linestyle
-        g = subset.copy()
+    g = subset.copy()
         g["kind"] = g["is_forecast"].map({False: "historical", True: "forecast"})
         sns.lineplot(
             ax=plt.gca(),
@@ -112,7 +104,6 @@ def plot_forecasts_for_metric(
     output_path = output_dir / f"all_forecasts_{metric}.png"
 
     if interactive:
-        # Show interactive window (pan/zoom, toolbar, etc.)
         plt.show()
         return None
     else:
@@ -126,10 +117,6 @@ def plot_all_metrics_single_window(
     output_dir: Path,
     interactive: bool = False,
 ) -> Path | None:
-    """
-    Plot all metrics and all labels in a single matplotlib window,
-    using one subplot per metric.
-    """
     sns.set(style="whitegrid")
 
     metrics = sorted(df["metric"].unique())
@@ -137,7 +124,6 @@ def plot_all_metrics_single_window(
     if n == 0:
         raise ValueError("No metrics to plot.")
 
-    # Determine grid size (roughly square)
     ncols = int(round(n ** 0.5))
     ncols = max(1, ncols)
     nrows = (n + ncols - 1) // ncols
@@ -152,7 +138,6 @@ def plot_all_metrics_single_window(
         if subset.empty:
             continue
 
-        # Use seaborn lineplot per metric; style encodes forecast vs historical
         g = subset.copy()
         g["kind"] = g["is_forecast"].map({False: "historical", True: "forecast"})
         sns.lineplot(
@@ -171,7 +156,6 @@ def plot_all_metrics_single_window(
         ax.set_ylabel(metric.replace("_", " ").title())
         ax.set_title(metric.replace("_", " ").title())
         ax.grid(alpha=0.3)
-        # Place legend outside plot area, with two columns, to avoid overlap
         ax.legend(
             fontsize=7,
             loc="upper left",
@@ -180,7 +164,6 @@ def plot_all_metrics_single_window(
             ncol=2,
         )
 
-    # Hide any unused subplots
     for idx in range(n, nrows * ncols):
         r, c = divmod(idx, ncols)
         axes[r][c].set_visible(False)

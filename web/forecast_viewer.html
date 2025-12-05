@@ -33,7 +33,7 @@
       flex-direction: column;
       padding: 16px 24px 24px;
       gap: 16px;
-      min-height: 0; /* allow chart area to shrink within viewport */
+      min-height: 0;
     }
     .controls {
       display: flex;
@@ -129,7 +129,6 @@
       }
     }
   </style>
-  <!-- Chart.js from CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -175,7 +174,6 @@
     let chart;
     let allRecords = null;
 
-    // Fixed color palette per metric so historical and forecast share same color
     const metricColors = {};
     const colorPalette = [
       "#38bdf8", // sky
@@ -198,7 +196,6 @@
     }
 
     function buildSeriesFromRecord(rec) {
-      // record comes from all_forecasts.json: {metric, label, year, value, is_forecast}
       const year = rec.year;
       const val = rec.value;
       const isForecast = rec.is_forecast;
@@ -248,7 +245,6 @@
 
       const datasets = [];
 
-      // Group by metric only (single company selected)
       const byKey = {};
       for (const r of filtered) {
         const key = r.metric;
@@ -318,7 +314,6 @@
                 usePointStyle: true,
                 pointStyle: 'line',
                 filter: function(item, chart) {
-                  // Only show legend entries that don't contain "(forecast)"
                   return !item.text.includes('(forecast)');
                 },
               },
@@ -355,7 +350,6 @@
       statusEl.textContent = `Loaded ${records.length} records from all_forecasts.json. Showing ${selectedCompany}.`;
     }
 
-    // Initial load
     (async () => {
       try {
         await createMultiChart();
